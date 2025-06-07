@@ -36,4 +36,14 @@ pub enum LlmError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    #[error("Tool execution error: {message}")]
+    ToolExecution {
+        message: String,
+        #[source]
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+
+    #[error("Tool not found: {0}")]
+    ToolNotFound(String),
 }

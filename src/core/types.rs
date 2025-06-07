@@ -1,4 +1,10 @@
+use crate::core::traits::ToolFunction;
 use crate::provider::Provider;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Message {
@@ -14,9 +20,35 @@ pub enum ChatRole {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ConversationMessage {
+    Chat(Message),
+    ToolCall(ToolCall),
+    ToolResult(ToolResult),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct StructuredRequest {
     pub model: String,
-    pub messages: Vec<Message>,
+    pub messages: Vec<ConversationMessage>,
+    pub tools: Option<Box<[Tool]>>,
+    pub tool_choice: Option<ToolChoice>,
+    pub parallel_tool_calls: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tool {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Value,
+    pub strict: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolChoice {
+    None,
+    Auto,
+    Required,
+    Function { name: String },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,4 +70,60 @@ pub struct ResponseMetadata {
     pub provider: Provider,
     pub model: String,
     pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolResult {
+    pub tool_call_id: String,
+    pub content: String,
+}
+
+pub struct ToolRegistry {
+    tools: HashMap<String, Arc<dyn ToolFunction>>,
+}
+
+impl ToolRegistry {
+    pub fn new() -> Self {
+        Self {
+            tools: HashMap::new(),
+        }
+    }
+
+    pub fn register(&mut self, tool: Arc<dyn ToolFunction>) {
+        let schema = tool.schema();
+        self.tools.insert(schema.name, tool);
+    }
+
+    pub fn get_schemas(&self) -> Vec<Tool> {
+        self.tools.values().map(|tool| tool.schema()).collect()
+    }
+
+    pub async fn execute(&self, tool_call: &ToolCall) -> Result<String, crate::core::error::LlmError> {
+        if let Some(tool) = self.tools.get(&tool_call.name) {
+            let result = tool.execute(tool_call.arguments.clone()).await?;
+            Ok(result.to_string())
+        } else {
+            Err(crate::core::error::LlmError::ToolNotFound(tool_call.name.clone()))
+        }
+    }
+}
+
+
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+pub struct ToolSet {
+    pub registry: ToolRegistry,
+}
+
+impl ToolSet {
+    pub fn tools(&self) -> Vec<Tool> {
+        self.registry.get_schemas()
+    }
 }
